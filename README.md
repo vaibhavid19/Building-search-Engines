@@ -1,1 +1,1 @@
-# Basic search Engine - Information retrival code
+Markdown file for basic information retrival and ranking documents
