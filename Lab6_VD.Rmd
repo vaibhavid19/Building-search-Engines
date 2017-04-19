@@ -1,0 +1,128 @@
+---
+title: "Lab6_VD"
+author: "Vaibhavi Doiphode"
+date: "17 April 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Task 1: Collecting Twitter Data
+```{r Task 1}
+# 1.a. Install and load necessary package
+library(tm)
+library(magrittr)
+library(SocialMediaLab)
+library(igraph)
+library(topicmodels)
+library(tidytext)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(gutenbergr)
+library(stringr)
+setwd("C:/Users/dell/Desktop/SPRING 2017/Advanced Data Mining")
+
+# Use API Key and secret key
+myapikey <- "dSU7TyXpDmMhoObTiATveca9B"
+myapisecret <- "uey8omq3QPwwstxHcmVr1KR1a9MKI3QRv7wugqZ5wqbZBCN2nt"
+
+# Use access token and token secret 
+myaccesstoken <- "2670677821-DOilVTWtVk0XvxLDRuFb7rOVa456alUAziJE2II"
+myaccesstokensecret <- "S0hXtZFkqeljI7YZ66qMpSQs2jT0iqrjMF2D1drvL3zMx"
+
+# 1.b. Specify a search term of your interest and collect 1000 tweets about this term
+myTwitterData <- Authenticate("twitter", apiKey=myapikey, apiSecret=myapisecret,accessToken=myaccesstoken, accessTokenSecret=myaccesstokensecret) %>% Collect(searchTerm="quantum", numTweets=1000, writeToFile=FALSE, verbose=FALSE, language = "en", since = "2013-03-01", until="2017-04-12")
+
+nrow(myTwitterData)
+tweet.list <- myTwitterData$text
+N.tweets <- length(tweet.list)
+names(tweet.list) <- paste0("tweet", c(1:N.tweets))
+head(tweet.list, 5)
+
+# 1.c. Apply the following text processing techniques to the collected tweets with help of the tm package
+# Remove punctuations
+# Strip whitespace
+# Make all text lowercase
+# Filter out stop words
+#tweets = Corpus(DataframeSource(as.matrix(myTwitterData$text)))
+#BOW = DocumentTermMatrix(tweets, control = list(removePunctuation = T, stripWhitespace = T, tolower = T, stopwords = T))
+query <- "Einstein's theory"
+# Vector space model
+my.docs <- VectorSource(c(tweet.list, query))
+my.docs$Names <- c(names(tweet.list), "query")
+length(my.docs)
+tail(my.docs$Names)
+#tweets = Corpus(DataframeSource(as.matrix(my.tweets)))
+my.corpus <- Corpus(my.docs)
+my.corpus <- tm_map(my.corpus, removePunctuation)
+my.corpus <- tm_map(my.corpus, stripWhitespace)
+my.corpus <- tm_map(my.corpus, content_transformer(tolower))
+my.corpus <- tm_map(my.corpus, removeWords, stopwords("english"))
+my.corpus <- tm_map(my.corpus, stemDocument, language = "english")
+my.corpus[71]$content
+```
+
+## Task 2: Build a search engine on the Twitter data set
+```{r Task 2}
+# 2.a. Specify your information need (create a query)
+# 2.b. Build a search engine based on the vector space model with normalized tf-idf weighting
+# query <- "Einstein's theory"
+
+# Use vector space model build above by appending query. Transform above corpus in Term document Matrix
+term.doc.matrix.stm <- TermDocumentMatrix(my.corpus)
+
+# Sparsity and storage of the term document matrix
+term.doc.matrix <- as.matrix(term.doc.matrix.stm)
+term.doc.matrix[0:5, 1:5]
+cat("Dense matrix representation costs", object.size(term.doc.matrix), "bytes.\n", 
+    "Simple triplet matrix representation costs", object.size(term.doc.matrix.stm), 
+    "bytes.")
+
+# Define function to get td-idf weights
+get.tf.idf.weights <- function(tf.vec, df) {
+    # Computes tfidf weights from a term frequency vector and a document
+    # frequency scalar
+    weight = rep(0, length(tf.vec))
+    weight[tf.vec > 0] = (1 + log2(tf.vec[tf.vec > 0])) * log2(N.tweets/df)
+    weight
+}
+
+# Apply tf-idf weighting on every row of term document matrix
+get.weights.per.term.vec <- function(tfidf.row) {
+    term.df <- sum(tfidf.row[1:N.tweets] > 0)
+    tf.idf.vec <- get.tf.idf.weights(tfidf.row, term.df)
+    return(tf.idf.vec)
+}
+tfidf.matrix.one <- t(apply(term.doc.matrix, c(1), FUN = get.weights.per.term.vec))
+colnames(tfidf.matrix.one) <- colnames(term.doc.matrix)
+tfidf.matrix.one[0:3, 1:5]
+
+# Normalize each column vector in tf-idf matrix
+tfidf.matrix.two <- scale(tfidf.matrix.one, center = FALSE, scale = sqrt(colSums(tfidf.matrix.one^2)))
+tfidf.matrix.two[0:3, 1:5]
+
+# Extract query vector
+tweet.query.vector <- tfidf.matrix.two[, (N.tweets + 1)]
+tfidf.matrix.three <- tfidf.matrix.two[, 1:N.tweets]
+tfidf.matrix.three[0:3, 1:5]
+
+# Calculate cosine similarity using vector product
+tdoc.scores <- t(tweet.query.vector) %*% tfidf.matrix.three
+ncol(tdoc.scores)
+summary(tdoc.scores)
+
+#results.df <- data.frame(score = t(tdoc.scores), text = unlist(myTwitterData$text))
+results.df <- data.frame( score = t(tdoc.scores), text = unlist(tweet.list))
+results.df <- results.df[order(results.df$score, decreasing = TRUE), ]
+
+# 2.c. Generate ranked search result (20%)
+options(width = 2000)
+print(results.df, row.names = FALSE, nrow =10, right = FALSE, digits = 2)
+
+# 2.d. Describe your result and ranking.
+# From the results, we see that first two scores are comparable and are twice as high as third in the list. First tweet talks about "Einsten" and his paper on relativity theory whereas second tweeet has word "Einstein" but no mention of the word "theory". This happens because of relative rareness of the word "Einsten" in the documents and our choice to incorporate the inverse document frequency weighting for both documents and query. On a minor note, because of stemming performed, both tweets with "Einstein" and "Eiensten's" are selected and shown at top of the list. Same goes for pair "theory" and "theories" which appear in first 10 tweets with high scores. 
+
+```
